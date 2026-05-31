@@ -1,0 +1,235 @@
+import com.alipay.api.AlipayApiException;
+import com.alipay.api.AlipayClient;
+import com.alipay.api.DefaultAlipayClient;
+import com.alipay.api.request.AlipayTradePagePayRequest;
+import com.github.wechatpay.apiv3.WechatPayHttpClientBuilder;
+import com.github.wechatpay.apiv3.auth.PrivateKeySigner;
+import com.github.wechatpay.apiv3.auth.AutoUpdateCertificatesVerifier;
+import com.github.wechatpay.apiv3.domain.payments.jsapi.JsapiTransactionsResource;
+import com.github.wechatpay.apiv3.domain.payments.jsapi.PrepayRequest;
+import com.github.wechatpay.apiv3.utils.PaymentSigner;
+import com.github.wechatpay.apiv3.utils.RSAUtil;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.web.bind.annotation.*;
+
+import javax.servlet.http.HttpServletRequest;
+import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+@SpringBootApplication
+@ConfigurationPropertiesScan
+public class PaymentApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(PaymentApplication.class, args);
+    }
+
+    // ==================== 配置类 ====================
+    @ConfigurationProperties(prefix = "wechat.pay")
+    public static class WeChatPayConfig {
+        private String appId = "YOUR_WECHAT_APPID";
+        private String mchId = "YOUR_MCH_ID";
+        private String apiV3Key = "YOUR_API_V3_KEY";
+        private String privateKeyPath = "classpath:apiclient_key.pem";
+        private String notifyUrl = "https://your.domain.com/api/payment/wechat/callback";
+
+        // Getters and Setters
+        public String getAppId() { return appId; }
+        public void setAppId(String appId) { this.appId = appId; }
+        public String getMchId() { return mchId; }
+        public void setMchId(String mchId) { this.mchId = mchId; }
+        public String getApiV3Key() { return apiV3Key; }
+        public void setApiV3Key(String apiV3Key) { this.apiV3Key = apiV3Key; }
+        public String getPrivateKeyPath() { return privateKeyPath; }
+        public void setPrivateKeyPath(String privateKeyPath) { this.privateKeyPath = privateKeyPath; }
+        public String getNotifyUrl() { return notifyUrl; }
+        public void setNotifyUrl(String notifyUrl) { this.notifyUrl = notifyUrl; }
+    }
+
+    @ConfigurationProperties(prefix = "alipay")
+    public static class AlipayConfig {
+        private String appId = "YOUR_ALIPAY_APPID";
+        private String privateKey = "YOUR_ALIPAY_PRIVATE_KEY";
+        private String alipayPublicKey = "YOUR_ALIPAY_PUBLIC_KEY";
+        private String gatewayUrl = "https://openapi.alipaydev.com/gateway.do";
+        private String notifyUrl = "https://your.domain.com/api/payment/alipay/callback";
+        private String returnUrl = "http://localhost:8080/pay/success";
+
+        // Getters and Setters
+        public String getAppId() { return appId; }
+        public void setAppId(String appId) { this.appId = appId; }
+        public String getPrivateKey() { return privateKey; }
+        public void setPrivateKey(String privateKey) { this.privateKey = privateKey; }
+        public String getAlipayPublicKey() { return alipayPublicKey; }
+        public void setAlipayPublicKey(String alipayPublicKey) { this.alipayPublicKey = alipayPublicKey; }
+        public String getGatewayUrl() { return gatewayUrl; }
+        public void setGatewayUrl(String gatewayUrl) { this.gatewayUrl = gatewayUrl; }
+        public String getNotifyUrl() { return notifyUrl; }
+        public void setNotifyUrl(String notifyUrl) { this.notifyUrl = notifyUrl; }
+        public String getReturnUrl() { return returnUrl; }
+        public void setReturnUrl(String returnUrl) { this.returnUrl = returnUrl; }
+    }
+
+    // ==================== Bean配置 ====================
+    @Bean
+    public PrivateKey merchantPrivateKey(WeChatPayConfig config) throws Exception {
+        return RSAUtil.loadPrivateKey(new String(
+                PaymentApplication.class.getResourceAsStream(config.getPrivateKeyPath()).readAllBytes(),
+                StandardCharsets.UTF_8));
+    }
+
+    @Bean
+    public WechatPayHttpClientBuilder wechatPayHttpClientBuilder(WeChatPayConfig config, PrivateKey merchantPrivateKey) {
+        PrivateKeySigner signer = new PrivateKeySigner(config.getMchId(), merchantPrivateKey);
+        AutoUpdateCertificatesVerifier verifier = new AutoUpdateCertificatesVerifier(signer, config.getApiV3Key().getBytes(StandardCharsets.UTF_8));
+        return WechatPayHttpClientBuilder.create()
+                .withMerchant(config.getMchId(), config.getAppId(), merchantPrivateKey)
+                .withValidator(verifier);
+    }
+
+    @Bean
+    public AlipayClient alipayClient(AlipayConfig config) {
+        return new DefaultAlipayClient(
+                config.getGatewayUrl(),
+                config.getAppId(),
+                config.getPrivateKey(),
+                "json",
+                "UTF-8",
+                config.getAlipayPublicKey(),
+                "RSA2");
+    }
+
+    // ==================== 服务类 ====================
+    @RestController
+    @RequestMapping("/api/payment")
+    public static class PaymentController {
+
+        private final WechatPayHttpClientBuilder wechatPayClientBuilder;
+        private final WeChatPayConfig weChatPayConfig;
+        private final AlipayClient alipayClient;
+        private final AlipayConfig alipayConfig;
+        private final StringRedisTemplate stringRedisTemplate;
+        private final PrivateKey merchantPrivateKey;
+
+        // 构造函数注入
+        public PaymentController(WechatPayHttpClientBuilder wechatPayClientBuilder,
+                                 WeChatPayConfig weChatPayConfig,
+                                 AlipayClient alipayClient,
+                                 AlipayConfig alipayConfig,
+                                 StringRedisTemplate stringRedisTemplate,
+                                 PrivateKey merchantPrivateKey) {
+            this.wechatPayClientBuilder = wechatPayClientBuilder;
+            this.weChatPayConfig = weChatPayConfig;
+            this.alipayClient = alipayClient;
+            this.alipayConfig = alipayConfig;
+            this.stringRedisTemplate = stringRedisTemplate;
+            this.merchantPrivateKey = merchantPrivateKey;
+        }
+
+        @PostMapping("/unifiedorder")
+        public Object unifiedOrder(
+                @RequestParam String orderId,
+                @RequestParam String payType,
+                @RequestParam String description,
+                @RequestParam Double totalAmount) throws Exception {
+
+            if ("WECHAT".equalsIgnoreCase(payType)) {
+                Long total = (long) (totalAmount * 100);
+                JsapiTransactionsResource resource = new JsapiTransactionsResource(wechatPayClientBuilder.build());
+                PrepayRequest request = new PrepayRequest();
+                request.setAppid(weChatPayConfig.getAppId());
+                request.setMchid(weChatPayConfig.getMchId());
+                request.setDescription(description);
+                request.setOutTradeNo(orderId);
+                request.setNotifyUrl(weChatPayConfig.getNotifyUrl());
+                request.setAmount(amount -> amount.setTotal(total));
+                request.setPayer(payer -> payer.setOpenid("USER_OPENID")); // 替换为真实的用户openid
+
+                var response = resource.prepay(request);
+
+                Map<String, String> payParams = new HashMap<>();
+                payParams.put("appId", weChatPayConfig.getAppId());
+                payParams.put("timeStamp", String.valueOf(System.currentTimeMillis() / 1000));
+                payParams.put("nonceStr", UUID.randomUUID().toString().replace("-", ""));
+                payParams.put("package", "prepay_id=" + response.getPrepayId());
+                payParams.put("signType", "RSA");
+                payParams.put("paySign", PaymentSigner.sign(payParams, merchantPrivateKey));
+
+                return payParams;
+            } else if ("ALIPAY".equalsIgnoreCase(payType)) {
+                AlipayTradePagePayRequest request = new AlipayTradePagePayRequest();
+                request.setReturnUrl(alipayConfig.getReturnUrl());
+                request.setNotifyUrl(alipayConfig.getNotifyUrl());
+
+                Map<String, Object> bizContent = new HashMap<>();
+                bizContent.put("out_trade_no", orderId);
+                bizContent.put("total_amount", totalAmount);
+                bizContent.put("subject", description);
+                bizContent.put("product_code", "FAST_INSTANT_TRADE_PAY");
+                request.setBizContent(new com.alibaba.fastjson.JSONObject(bizContent).toJSONString());
+
+                var response = alipayClient.pageExecute(request);
+                if (response.isSuccess()) {
+                    return response.getBody();
+                } else {
+                    throw new AlipayApiException("支付宝统一下单失败: " + response.getSubMsg());
+                }
+            } else {
+                throw new IllegalArgumentException("不支持的支付类型: " + payType);
+            }
+        }
+
+        @PostMapping(value = "/wechat/callback", produces = "application/json;charset=UTF-8")
+        public String weChatNotify(HttpServletRequest request) throws Exception {
+            String notifyData = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            // 简化处理，实际应解析JSON并验证
+            String outTradeNo = "ORDER_ID_FROM_NOTIFY";
+
+            String key = "wx_pay:notify:" + outTradeNo;
+            if (stringRedisTemplate.opsForValue().setIfAbsent(key, "processed", 1, TimeUnit.HOURS)) {
+                try {
+                    // TODO: 执行你的业务逻辑
+                } catch (Exception e) {
+                    return "{\"code\":\"FAIL\",\"message\":\"业务处理失败\"}";
+                }
+            }
+            return "{\"code\":\"SUCCESS\",\"message\":\"成功\"}";
+        }
+
+        @PostMapping("/alipay/callback")
+        public String alipayNotify(HttpServletRequest request) {
+            Map<String, String> params = new HashMap<>();
+            request.getParameterMap().forEach((k, v) -> params.put(k, String.join(",", v)));
+
+            try {
+                if (!alipayClient.checkSign(params)) {
+                    return "fail";
+                }
+            } catch (AlipayApiException e) {
+                return "fail";
+            }
+
+            if ("TRADE_SUCCESS".equals(params.get("trade_status"))) {
+                String outTradeNo = params.get("out_trade_no");
+                String key = "alipay:notify:" + outTradeNo;
+                if (stringRedisTemplate.opsForValue().setIfAbsent(key, "processed", 1, TimeUnit.HOURS)) {
+                    try {
+                        // TODO: 执行你的业务逻辑
+                    } catch (Exception e) {
+                        return "fail";
+                    }
+                }
+            }
+            return "success";
+        }
+    }
+}
