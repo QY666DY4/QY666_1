@@ -1,0 +1,104 @@
+import javax.mail.*;
+import javax.mail.internet.InternetAddress;
+import javax.mail.internet.MimeMessage;
+import java.util.Properties;
+import java.util.Random;
+
+public class MailUtils {
+    // 生成6位验证码
+    public static String getCode() {
+        return String.format("%06d", new Random().nextInt(999999));
+    }
+
+    // 发送验证码到邮箱
+    public static void sendMail(String toEmail, String code) throws Exception {
+        Properties prop = new Properties();
+        prop.setProperty("mail.host", "smtp.qq.com");
+        prop.setProperty("mail.transport.protocol", "smtp");
+        prop.setProperty("mail.smtp.auth", "true");
+        prop.setProperty("mail.smtp.ssl.enable", "true");
+
+        Session session = Session.getInstance(prop, new Authenticator() {
+            @Override
+            protected PasswordAuthentication getPasswordAuthentication() {
+                // 这里填你的QQ邮箱 + 授权码
+                return new PasswordAuthentication("你的邮箱@qq.com", "邮箱授权码");
+            }
+        });
+
+        Message message = new MimeMessage(session);
+        message.setFrom(new InternetAddress("你的邮箱@qq.com"));
+        message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail));
+        message.setSubject("登录验证码");
+        message.setText("您的登录验证码：" + code + "，5分钟内有效。");
+
+        Transport.send(message);
+    }
+}
+import javax.servlet.ServletException;
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.*;
+import java.io.IOException;
+
+@WebServlet("/login")
+public class LoginServlet extends HttpServlet {
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+        String email = request.getParameter("email");
+        String inputCode = request.getParameter("code");
+        HttpSession session = request.getSession();
+        String realCode = (String) session.getAttribute("code");
+
+        if (realCode != null && realCode.equals(inputCode)) {
+            response.getWriter().write("登录成功！");
+        } else {
+            response.getWriter().write("验证码错误！");
+        }
+    }
+
+}
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+
+@WebServlet("/sendCode")
+public class SendCodeServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) {
+        try {
+            String email = request.getParameter("email");
+            String code = MailUtils.getCode();
+            MailUtils.sendMail(email, code);
+
+            HttpSession session = request.getSession();
+            session.setAttribute("code", code);
+            response.getWriter().write("发送成功");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+<%@ page contentType="text/html;charset=UTF-8" language="java" %>
+<html>
+<head>
+    <title>邮箱验证码登录</title>
+</head>
+<body>
+    <form action="login" method="post">
+        邮箱：<input type="email" name="email" required><br><br>
+        验证码：<input type="text" name="code" required>
+        <button type="button" onclick="sendCode()">获取验证码</button><br><br>
+        <button type="submit">登录</button>
+    </form>
+
+<script>
+    function sendCode() {
+        let email = document.getElementsByName("email")[0].value;
+        fetch("sendCode?email=" + email);
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<dependency>
+    <groupId>com.squareup.okhttp3</groupId>
+    <artifactId>okhttp</artifactId>
+    <version>4.12.0</version>
+</dependency>
+<dependency>
+    <groupId>com.squareup.okhttp3</groupId>
+    <artifactId>okhttp</artifactId>
+    <version>4.12.0</version>
+</dependency>
+<dependency>
+    <groupId>com.alibaba</groupId>
+    <artifactId>fastjson2</artifactId>
+    <version>2.0.48</version>
+</dependency>
+{
+"model": "glm-4",
+"messages": [{ "role": "user", "content": "你好，请介绍一下你自己" }],
+"temperature": 0.7
+}
+Request request = new Request.Builder()
+    .url(apiUrl).post(body)
+    .addHeader("Authorization", "Bearer " + key)
+    .addHeader("Content-Type", "application/json").build();
+OkHttpClient client = new OkHttpClient();
+try (Response response = client.newCall(request).execute()) {
+    if (!response.isSuccessful()) throw new IOException("Unexpected code: " + response);
+    String body = response.body().string();
+    System.out.println("Server Response: " + body);
+} catch (IOException e) { e.printStackTrace(); }
+JSONObject jsonResponse = JSONObject.parseObject(responseBody);
+String content = jsonResponse.getJSONArray("choices")
+    .getJSONObject(0)
+    .getJSONObject("message")
+    .getString("content");
+ObjectMapper objectMapper = new ObjectMapper();
+ChatCompletionResponse resp = objectMapper.readValue(
+    responseBody, ChatCompletionResponse.class);
+String content = resp.getChoices().get(0).getMessage().getContent();
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
+import okhttp3.*;
+import java.io.IOException;
+
+public class LLMAPICaller {
+    private static final String API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+    private static final String API_KEY = System.getenv("ZAI_API_KEY");
+
+    public static void main(String[] args) {
+        OkHttpClient client = new OkHttpClient();
+        String jsonBody = "{\"model\":\"glm-4\",\"messages\":[{\"role\":\"user\",\"content\":\"你好，请介绍一下你自己\"}]}";
+
+        Request request = new Request.Builder()
+            .url(API_URL)
+            .post(RequestBody.create(jsonBody, MediaType.get("application/json; charset=utf-8")))
+            .addHeader("Authorization", "Bearer " + API_KEY)
+            .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            JSONObject res = JSON.parseObject(response.body().string());
+            System.out.println("AI: " + res.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content"));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+client.newCall(request).enqueue(object : Callback {
+    override fun onResponse(call: Call, response: Response) {
+        response.body?.source()?.use { source ->
+            while (!source.exhausted()) {
+                val line = source.readUtf8Line()
+                if (line?.startsWith("data: ") == true && line != "data: [DONE]") {
+                    print(parseContent(line.substring(6)))
+                }
+            }
+        }
+    }
+})
+// 1. 初始化客户端
+ZhipuAiClient client = ZhipuAiClient.builder().ofZHIPU()
+    .apiKey(System.getenv("ZAI_API_KEY"))
+    .build();
+
+// 2. 构建请求
+ChatCompletionCreateParams req = ChatCompletionCreateParams
+    .builder().model("glm-4")
+    .messages(Arrays.asList(
+        ChatMessage.builder().role("user")
+            .content("你好，请介绍一下你自己").build()
+    )).build();
+
+// 3. 发送请求
+client.chat().createChatCompletion(req)
+    .filter(Response::isSuccess)
+    .ifPresent(res -> {
+        String reply = res.getData().getChoices()
+            .get(0).getMessage().getContent();
+        System.out.println("AI 回复: " + reply);
+    });

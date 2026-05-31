@@ -1,0 +1,2 @@
+关于javawebXML介绍，以及如何读取XML文件
+Javaweb中用到xml的代码

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bookstore>
+    <book category="Computer">
+        <title lang="en">Effective Java</title>
+        <author>Joshua Bloch</author>
+        <year>2018</year>
+        <price>45.00</price>
+    </book>
+    <book category="Fiction">
+        <title lang="zh">三体</title>
+        <author>刘慈欣</author>
+        <year>2006</year>
+        <price>32.50</price>
+    </book>
+</bookstore>

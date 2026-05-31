@@ -1,0 +1,6 @@
+需求：基于Java Web实现邮箱验证登录功能。
+技术：JDK8、Tomcat9、MySQL、JavaMail、JSTL、Servlet/JSP。
+功能：注册生成验证码→发送验证邮件→用户点击链接激活→激活后才可登录。
+数据库：用户表增加verify_status验证状态字段。
+邮件配置：QQ邮箱SMTP（smtp.qq.com:465，SSL）。
+要求：输出完整代码、项目结构、部署步骤、测试方法。
